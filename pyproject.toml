@@ -20,6 +20,7 @@ dependencies = [
     "fastmcp>=2.12.5",
     "databricks-mcp>=0.5.1",
     "databricks>=0.2",
+    "dotenv>=0.9.9",
 ]
 
 [dependency-groups]

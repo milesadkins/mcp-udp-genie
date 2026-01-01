@@ -1,6 +1,86 @@
-# MCP Server - Hello World
+# MCP StoneX UDP Genie
 
 A simple, production-ready template for building Model Context Protocol (MCP) servers using FastMCP and FastAPI. This project demonstrates how to create custom tools that AI assistants can discover and invoke.
+
+## 🚀 Quickstart Setup Guide
+
+Follow these steps to deploy and connect your MCP StoneX UDP Genie App:
+
+---
+
+### 0. **Update the Repository**
+
+- Add or update tools as needed.
+- **Note:** You currently need to define a separate tool for each Genie.
+
+---
+
+### 1. **Launch as a Databricks App**
+
+Run the following commands in your project directory:
+
+```bash
+databricks sync --watch . /Workspace/Users/{your_databricks_username}/mcp-stonex-udp-genie
+
+databricks apps deploy mcp-stonex-udp-genie \
+  --source-code-path /Workspace/Users/{your_databricks_username}/mcp-stonex-udp-genie
+```
+
+---
+
+### 2. **Assign App Permissions**
+
+For the auto-created App Service Principal, grant **ALL** of the following permissions _in Databricks_:
+
+- `CAN USE` on the App
+- `CAN RUN` on the Genie Space
+- `USE CATALOG` on the Genie Space's catalog target
+- `USE SCHEMA` on the Genie Space's schema target
+- `SELECT` on **all tables** in the Genie Space's schema target
+
+---
+
+### 3. **Create a Databricks App Connection**
+
+1. Go to Databricks Account Console
+2. Go to **Settings** → **App Connections**.
+3. Click **Add Connection**.
+4. Set up as follows:
+    - **REDIRECT_URL:**  
+      `{databricks_app_url}/.auth/callback`
+    - **CLIENT_SECRET:**  
+      YES (copy & save for step 4)
+    - **OAUTH_ACCESS_SCOPE:**  
+      `all-apis`
+
+---
+
+### 4. **Configure an External UC Connection**
+
+Fill in the following values:
+
+| Field            | Value                                              |
+|------------------|---------------------------------------------------|
+| CONNECTION_TYPE  | `HTTP`                                            |
+| AUTH_TYPE        | `OAUTH Machine 2 Machine`                         |
+| HOST             | `{databricks_app_url}`                            |
+| CLIENT_ID        | _(from previous step)_                            |
+| CLIENT_SECRET    | _(from previous step)_                            |
+| OAUTH_SCOPE      | `all-apis`                                        |
+| TOKEN_ENDPOINT   | `{workspace_url}/oidc/v1/token`                   |
+| BASE_PATH        | `/mcp`                                            |
+| IS_MCP_CONNECTION| `True`                                            |
+
+---
+
+### 5. **Add to Playground or Supervisor**
+
+- Register the External MCP Server in Playground or Multi-agent Supervisor for testing and multi-agent experiments.
+
+---
+
+
+
 
 ### Key Concepts
 
