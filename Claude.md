@@ -52,14 +52,10 @@ app.yaml            # Databricks Apps deployment config
 - **Current tools:**
   - `health`: Simple health check for monitoring
   - `get_current_user`: Returns authenticated user information (display_name, user_name, active status)
-  - **Dynamic Genie Tools** (recommended):
+  - **Genie Tools:**
     - `list_genie_spaces`: List all available Genie spaces with IDs and metadata
     - `query_genie(space_id, query, conversation_id?)`: Submit NL query to any Genie space
     - `poll_genie_response(space_id, conversation_id, message_id)`: Poll for results
-  - **Deprecated Hardcoded Tools** (for backward compatibility):
-    - `query_space_01f0d08866f11370b6735facce14e3ff`: Query specific "US Stocks" space
-    - `poll_response_01f0d08866f11370b6735facce14e3ff`: Poll for specific space
-    - `get_query_result_01f0d08866f11370b6735facce14e3ff`: Fetch results from specific space
 
 ### `server/utils.py`
 - `get_workspace_client()`: Returns WorkspaceClient with app service principal auth (when deployed) or developer auth (local)
@@ -276,15 +272,6 @@ result = query_genie(
     conversation_id="existing_conversation_id"  # Continue context
 )
 ```
-
-### Migration from Hardcoded Tools
-
-If you were using the deprecated hardcoded tools, migrate to the generic tools:
-
-| Old Tool | New Tool |
-|----------|----------|
-| `query_space_01f0d08866f11370b6735facce14e3ff(query)` | `query_genie(space_id="01f0d...", query)` |
-| `poll_response_01f0d08866f11370b6735facce14e3ff(conv_id, msg_id)` | `poll_genie_response(space_id="01f0d...", conv_id, msg_id)` |
 
 ## MCP Protocol Basics
 

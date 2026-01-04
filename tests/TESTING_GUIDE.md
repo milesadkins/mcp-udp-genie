@@ -77,9 +77,9 @@ pytest tests/test_mcp_tools.py -v -s
 |-----------|-----------|--------|
 | `health` | 1 | ✅ |
 | `get_current_user` | 1 | ✅ |
-| `query_space_01f0d08866f11370b6735facce14e3ff` | 8 | ✅ |
-| `poll_response_01f0d08866f11370b6735facce14e3ff` | 2 | ✅ |
-| `get_query_result_01f0d08866f11370b6735facce14e3ff` | 2 | ✅ |
+| `list_genie_spaces` | 2 | ✅ |
+| `query_genie` | 4 | ✅ |
+| `poll_genie_response` | 3 | ✅ |
 
 ### Test Categories
 
@@ -130,60 +130,50 @@ pytest tests/test_mcp_tools.py -v -s
 - Validates authentication
 - Checks response structure
 
-### Test: `test_query_space_simple_query`
-- Submits natural language query
-- Validates response
-- Checks conversation_id returned
+### Test: `test_list_genie_spaces`
+- Lists available Genie spaces
+- Validates response structure
+- Checks for spaces array
 
-### Test: `test_query_space_with_auto_poll`
-- Tests auto-polling feature
-- Waits for completion
-- Validates final results
+### Test: `test_list_genie_spaces_returns_structure`
+- Validates proper response format
+- Checks space_id and title fields
+- Verifies count matches array length
 
-### Test: `test_query_space_without_auto_poll`
-- Tests immediate return
-- Validates message_id returned
-- Enables manual polling
+### Test: `test_query_genie_with_valid_space`
+- Submits query to valid space
+- Validates conversation_id returned
+- Checks message_id returned
 
-### Test: `test_query_space_empty_query`
-- Tests input validation
+### Test: `test_query_genie_invalid_space`
+- Tests with invalid space_id
 - Expects error response
+- Validates error handling
+
+### Test: `test_query_genie_empty_query`
+- Tests input validation
+- Expects INVALID_INPUT error
 - Validates error message
 
-### Test: `test_query_space_very_long_query`
-- Tests length validation
-- Creates 10k+ character query
-- Validates handling
+### Test: `test_query_genie_empty_space_id`
+- Tests missing space_id
+- Expects error response
+- Validates error handling
 
-### Test: `test_poll_response_invalid_ids`
+### Test: `test_poll_genie_response_invalid_ids`
 - Tests ID validation
 - Uses invalid UUIDs
 - Expects error response
 
-### Test: `test_poll_response_with_short_timeout`
-- Tests timeout handling
-- Uses 1-second timeout
-- Validates timeout message
+### Test: `test_poll_genie_response_missing_space_id`
+- Tests missing space_id
+- Expects INVALID_INPUT error
+- Validates error handling
 
-### Test: `test_get_query_result_invalid_ids`
-- Tests all ID validations
-- Uses invalid parameters
-- Expects error response
-
-### Test: `test_get_query_result_missing_parameters`
-- Tests required parameters
-- Omits required fields
-- Expects error response
-
-### Test: `test_end_to_end_query_flow`
+### Test: `test_full_genie_flow_with_generic_tools`
 - Complete workflow test
-- Submit → Poll → Results
+- list_genie_spaces → query_genie → poll_genie_response
 - Validates each step
-
-### Test: `test_concurrent_queries`
-- Submits multiple queries
-- Tests server concurrency
-- Validates all responses
 
 ### Test: `test_tool_with_invalid_name`
 - Tests error handling
@@ -285,43 +275,29 @@ tests/test_mcp_tools.py::test_health_tool PASSED                    [15%]
 tests/test_mcp_tools.py::test_get_current_user PASSED               [20%]
 ✅ Current user info: {"display_name":"...",...}
 
-tests/test_mcp_tools.py::test_query_space_simple_query PASSED       [25%]
-✅ Query response received: {"conversation_id":"01f0e34c...",...}
+tests/test_mcp_tools.py::test_list_genie_spaces PASSED              [25%]
+✅ List spaces response: {"spaces":[...],"count":1}
 
-tests/test_mcp_tools.py::test_query_space_with_auto_poll PASSED     [30%]
-✅ Auto-poll query completed: {"status":"COMPLETED",...}
+tests/test_mcp_tools.py::test_query_genie_with_valid_space PASSED   [30%]
+✅ Query response: {"conversation_id":"...",...}
 
-tests/test_mcp_tools.py::test_query_space_without_auto_poll PASSED  [35%]
-✅ Non-auto-poll query submitted: {"conversation_id":"...",...}
+tests/test_mcp_tools.py::test_query_genie_invalid_space PASSED      [35%]
+✅ Invalid space error: {"error":"SPACE_NOT_FOUND",...}
 
-tests/test_mcp_tools.py::test_query_space_empty_query PASSED        [40%]
-✅ Empty query error response: {"error":"INVALID_INPUT",...}
+tests/test_mcp_tools.py::test_query_genie_empty_query PASSED        [40%]
+✅ Empty query error: {"error":"INVALID_INPUT",...}
 
-tests/test_mcp_tools.py::test_query_space_very_long_query PASSED    [45%]
-✅ Long query error response: {"error":"INVALID_INPUT",...}
+tests/test_mcp_tools.py::test_poll_genie_response_invalid_ids PASSED [45%]
+✅ Invalid poll IDs error: {"error":"...",...}
 
-tests/test_mcp_tools.py::test_poll_response_invalid_ids PASSED      [50%]
-✅ Invalid IDs error response: {"error":"INVALID_INPUT",...}
+tests/test_mcp_tools.py::test_full_genie_flow_with_generic_tools PASSED [50%]
+🔄 Testing full flow with generic Genie tools...
+  1️⃣ Listing Genie spaces...
+  2️⃣ Submitting query...
+  3️⃣ Polling for results...
+  ✅ Full flow completed successfully!
 
-tests/test_mcp_tools.py::test_poll_response_with_short_timeout PASSED [55%]
-✅ Poll response: {"status":"TIMEOUT",...}
-
-tests/test_mcp_tools.py::test_get_query_result_invalid_ids PASSED    [60%]
-✅ Invalid IDs error response: {"error":"INVALID_INPUT",...}
-
-tests/test_mcp_tools.py::test_get_query_result_missing_parameters PASSED [65%]
-✅ Missing parameters error (expected): ...
-
-tests/test_mcp_tools.py::test_end_to_end_query_flow PASSED          [70%]
-🔄 Starting end-to-end query flow test...
-  1️⃣ Submitting query...
-  ✅ Query submitted and completed: ...
-✅ End-to-end flow completed successfully
-
-tests/test_mcp_tools.py::test_concurrent_queries PASSED             [75%]
-✅ Submitted 3 concurrent queries
-
-tests/test_mcp_tools.py::test_tool_with_invalid_name PASSED         [80%]
+tests/test_mcp_tools.py::test_tool_with_invalid_name PASSED         [75%]
 ✅ Invalid tool name error (expected): ...
 
 tests/test_mcp_tools.py::test_resilience_after_errors PASSED        [85%]
@@ -344,20 +320,20 @@ TEST SUITE SUMMARY
   • get_current_user
     Get information about the current authenticated user...
 
-  • query_space_01f0d08866f11370b6735facce14e3ff
-    Query the US Stocks Price & Volume genie space for data insights...
+  • list_genie_spaces
+    List all available Genie spaces...
 
-  • poll_response_01f0d08866f11370b6735facce14e3ff
-    Poll for the response of a previously initiated message...
+  • query_genie
+    Submit a natural language query to a Genie space...
 
-  • get_query_result_01f0d08866f11370b6735facce14e3ff
-    Fetch the actual data results from a specific SQL query attachment...
+  • poll_genie_response
+    Poll for Genie query completion and retrieve results...
 
 ================================================================================
 ✅ All tests completed successfully!
 ================================================================================
 
-======================== 20 passed in 45.23s ================================
+======================== 15 passed in 45.23s ================================
 
 🛑 Stopping MCP server...
 ```
@@ -387,9 +363,13 @@ _wait_for_server_startup(base_url, timeout=60)  # Increase to 60s
 ```python
 # In your tests
 result = mcp_client.call_tool(
-    "query_space_01f0d08866f11370b6735facce14e3ff",
-    query="Your query",
-    max_wait_seconds=120  # Increase timeout
+    "poll_genie_response",
+    arguments={
+        "space_id": "your_space_id",
+        "conversation_id": "conv_id",
+        "message_id": "msg_id",
+        "max_wait_seconds": 120  # Increase timeout
+    }
 )
 ```
 
