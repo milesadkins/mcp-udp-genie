@@ -52,6 +52,14 @@ app.yaml            # Databricks Apps deployment config
 - **Current tools:**
   - `health`: Simple health check for monitoring
   - `get_current_user`: Returns authenticated user information (display_name, user_name, active status)
+  - **Dynamic Genie Tools** (recommended):
+    - `list_genie_spaces`: List all available Genie spaces with IDs and metadata
+    - `query_genie(space_id, query, conversation_id?)`: Submit NL query to any Genie space
+    - `poll_genie_response(space_id, conversation_id, message_id)`: Poll for results
+  - **Deprecated Hardcoded Tools** (for backward compatibility):
+    - `query_space_01f0d08866f11370b6735facce14e3ff`: Query specific "US Stocks" space
+    - `poll_response_01f0d08866f11370b6735facce14e3ff`: Poll for specific space
+    - `get_query_result_01f0d08866f11370b6735facce14e3ff`: Fetch results from specific space
 
 ### `server/utils.py`
 - `get_workspace_client()`: Returns WorkspaceClient with app service principal auth (when deployed) or developer auth (local)
@@ -219,6 +227,64 @@ current_user = user_client.current_user.me()
 ```
 
 **Real-world example:** See `get_current_user` tool in `server/tools.py` which uses user authentication to retrieve the current user's information.
+
+## Genie Tools Usage Guide
+
+The MCP server provides tools to query Databricks Genie spaces via natural language. Here's the recommended workflow:
+
+### Step 1: Discover Available Spaces
+
+```python
+# AI calls list_genie_spaces to see what data is available
+result = list_genie_spaces()
+# Returns: {"spaces": [{"space_id": "...", "title": "US Stocks", "description": "..."}], "count": 1}
+```
+
+### Step 2: Submit a Query
+
+```python
+# AI selects appropriate space and submits query
+result = query_genie(
+    space_id="01f0d153b27e1c7ca1d4e6c0f2477cae",
+    query="What are the top 5 most traded stocks today?"
+)
+# Returns: {"conversation_id": "...", "message_id": "...", "status": "SUBMITTED"}
+```
+
+### Step 3: Poll for Results
+
+```python
+# AI polls until query completes
+result = poll_genie_response(
+    space_id="01f0d153b27e1c7ca1d4e6c0f2477cae",
+    conversation_id="...",
+    message_id="...",
+    max_wait_seconds=60,
+    fetch_query_results=True
+)
+# Returns: {"status": "COMPLETED", "query_result": {"sql": "...", "data": [...], "row_count": 5}}
+```
+
+### Continuing Conversations
+
+To ask follow-up questions in the same context, pass the `conversation_id`:
+
+```python
+result = query_genie(
+    space_id="01f0d153b27e1c7ca1d4e6c0f2477cae",
+    query="What about NVIDIA specifically?",
+    conversation_id="existing_conversation_id"  # Continue context
+)
+```
+
+### Migration from Hardcoded Tools
+
+If you were using the deprecated hardcoded tools, migrate to the generic tools:
+
+| Old Tool | New Tool |
+|----------|----------|
+| `query_space_01f0d08866f11370b6735facce14e3ff(query)` | `query_genie(space_id="01f0d...", query)` |
+| `poll_response_01f0d08866f11370b6735facce14e3ff(conv_id, msg_id)` | `poll_genie_response(space_id="01f0d...", conv_id, msg_id)` |
 
 ## MCP Protocol Basics
 

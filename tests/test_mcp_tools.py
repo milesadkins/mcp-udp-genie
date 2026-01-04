@@ -188,6 +188,11 @@ def test_list_tools(mcp_client):
     expected_tools = [
         "health",
         "get_current_user",
+        # New generic Genie tools
+        "list_genie_spaces",
+        "query_genie",
+        "poll_genie_response",
+        # Deprecated hardcoded tools (still available for backward compatibility)
         "query_space_01f0d08866f11370b6735facce14e3ff",
         "poll_response_01f0d08866f11370b6735facce14e3ff",
         "get_query_result_01f0d08866f11370b6735facce14e3ff"
@@ -235,17 +240,273 @@ def test_health_tool(mcp_client):
 def test_get_current_user(mcp_client):
     """Test getting current user information."""
     result = mcp_client.call_tool("get_current_user")
-    
+
     text_content = _extract_text_from_result(result)
     assert text_content, "Should have text content"
     print(f"✅ Current user info: {text_content}")
-    
+
     # Should contain user information or error
     assert any(key in text_content.lower() for key in ["user", "display", "name", "error"])
 
 
 # ============================================================================
-# Test: Query Space Tool - Success Cases
+# Test: Generic Genie Space Tools (New Dynamic Tools)
+# ============================================================================
+
+def test_list_genie_spaces(mcp_client):
+    """Test listing available Genie spaces."""
+    result = mcp_client.call_tool("list_genie_spaces", arguments={})
+
+    text_content = _extract_text_from_result(result)
+    assert text_content, "Should have text content"
+    print(f"✅ List spaces response: {text_content[:300]}...")
+
+    # Should return spaces list or error
+    assert any(key in text_content.lower() for key in ["spaces", "count", "error"])
+
+
+def test_list_genie_spaces_returns_structure(mcp_client):
+    """Test that list_genie_spaces returns proper structure."""
+    result = mcp_client.call_tool("list_genie_spaces", arguments={})
+
+    text_content = _extract_text_from_result(result)
+
+    import json
+    try:
+        data = json.loads(text_content)
+
+        # Should have spaces key (list)
+        assert "spaces" in data, "Response should have 'spaces' key"
+        assert isinstance(data["spaces"], list), "'spaces' should be a list"
+
+        # Should have count key
+        assert "count" in data, "Response should have 'count' key"
+        assert data["count"] == len(data["spaces"]), "Count should match spaces length"
+
+        print(f"✅ Found {data['count']} Genie spaces")
+
+        # If there are spaces, check structure
+        if data["spaces"]:
+            first_space = data["spaces"][0]
+            assert "space_id" in first_space, "Space should have 'space_id'"
+            assert "title" in first_space, "Space should have 'title'"
+            print(f"✅ First space: {first_space['title']}")
+
+    except json.JSONDecodeError:
+        # If there's an error in the response, it should still be valid
+        assert "error" in text_content.lower(), "Non-JSON response should be an error"
+
+
+def test_query_genie_with_valid_space(mcp_client):
+    """Test submitting a query to a valid Genie space using new generic tool."""
+    # First, get a valid space_id from list_genie_spaces
+    list_result = mcp_client.call_tool("list_genie_spaces", arguments={})
+    list_content = _extract_text_from_result(list_result)
+
+    import json
+    try:
+        list_data = json.loads(list_content)
+
+        if list_data.get("count", 0) == 0:
+            pytest.skip("No Genie spaces available for testing")
+
+        space_id = list_data["spaces"][0]["space_id"]
+        print(f"✅ Using space_id: {space_id}")
+
+        # Now query using the generic tool
+        query_result = mcp_client.call_tool(
+            "query_genie",
+            arguments={
+                "space_id": space_id,
+                "query": "What datasets are available?"
+            }
+        )
+
+        query_content = _extract_text_from_result(query_result)
+        print(f"✅ Query response: {query_content[:200]}...")
+
+        # Should contain conversation_id and message_id
+        assert "conversation_id" in query_content.lower(), "Should have conversation_id"
+        assert "message_id" in query_content.lower(), "Should have message_id"
+
+    except json.JSONDecodeError:
+        pytest.skip("Could not parse list_genie_spaces response")
+
+
+def test_query_genie_invalid_space(mcp_client):
+    """Test querying with an invalid space_id."""
+    result = mcp_client.call_tool(
+        "query_genie",
+        arguments={
+            "space_id": "invalid-space-id-12345",
+            "query": "test query"
+        }
+    )
+
+    text_content = _extract_text_from_result(result)
+    print(f"✅ Invalid space error: {text_content}")
+
+    # Should return error
+    assert "error" in text_content.lower()
+
+
+def test_query_genie_empty_query(mcp_client):
+    """Test query_genie with empty query string."""
+    result = mcp_client.call_tool(
+        "query_genie",
+        arguments={
+            "space_id": "01f0d08866f11370b6735facce14e3ff",
+            "query": ""
+        }
+    )
+
+    text_content = _extract_text_from_result(result)
+    print(f"✅ Empty query error: {text_content}")
+
+    # Should return INVALID_INPUT error
+    assert "error" in text_content.lower()
+    assert "invalid_input" in text_content.lower() or "required" in text_content.lower()
+
+
+def test_query_genie_empty_space_id(mcp_client):
+    """Test query_genie with empty space_id."""
+    result = mcp_client.call_tool(
+        "query_genie",
+        arguments={
+            "space_id": "",
+            "query": "test query"
+        }
+    )
+
+    text_content = _extract_text_from_result(result)
+    print(f"✅ Empty space_id error: {text_content}")
+
+    # Should return INVALID_INPUT error
+    assert "error" in text_content.lower()
+
+
+def test_poll_genie_response_invalid_ids(mcp_client):
+    """Test poll_genie_response with invalid IDs."""
+    result = mcp_client.call_tool(
+        "poll_genie_response",
+        arguments={
+            "space_id": "01f0d08866f11370b6735facce14e3ff",
+            "conversation_id": "invalid_conv_id",
+            "message_id": "invalid_msg_id"
+        }
+    )
+
+    text_content = _extract_text_from_result(result)
+    print(f"✅ Invalid poll IDs error: {text_content}")
+
+    # Should return error
+    assert "error" in text_content.lower()
+
+
+def test_poll_genie_response_missing_space_id(mcp_client):
+    """Test poll_genie_response with missing space_id."""
+    result = mcp_client.call_tool(
+        "poll_genie_response",
+        arguments={
+            "space_id": "",
+            "conversation_id": "01f0e34ce9641238a5018229451c2ff2",
+            "message_id": "01f0e34ce97a157983ba500ee38047ea"
+        }
+    )
+
+    text_content = _extract_text_from_result(result)
+    print(f"✅ Missing space_id error: {text_content}")
+
+    # Should return INVALID_INPUT error
+    assert "error" in text_content.lower()
+
+
+def test_full_genie_flow_with_generic_tools(mcp_client):
+    """
+    Test complete flow using new generic tools:
+    1. list_genie_spaces
+    2. query_genie
+    3. poll_genie_response
+    """
+    print("\n🔄 Testing full flow with generic Genie tools...")
+
+    # Step 1: List spaces
+    print("  1️⃣ Listing Genie spaces...")
+    list_result = mcp_client.call_tool("list_genie_spaces", arguments={})
+    list_content = _extract_text_from_result(list_result)
+
+    import json
+    try:
+        list_data = json.loads(list_content)
+
+        if list_data.get("count", 0) == 0:
+            print("  ⚠️ No Genie spaces available, skipping full flow test")
+            pytest.skip("No Genie spaces available")
+
+        space_id = list_data["spaces"][0]["space_id"]
+        space_title = list_data["spaces"][0].get("title", "Unknown")
+        print(f"  ✅ Found space: {space_title} ({space_id})")
+
+        # Step 2: Submit query
+        print("  2️⃣ Submitting query...")
+        query_result = mcp_client.call_tool(
+            "query_genie",
+            arguments={
+                "space_id": space_id,
+                "query": "What tables are available in this space?"
+            }
+        )
+
+        query_content = _extract_text_from_result(query_result)
+        query_data = json.loads(query_content)
+
+        assert "conversation_id" in query_data, "Should have conversation_id"
+        assert "message_id" in query_data, "Should have message_id"
+
+        conversation_id = query_data["conversation_id"]
+        message_id = query_data["message_id"]
+        print(f"  ✅ Query submitted: conv={conversation_id[:20]}..., msg={message_id[:20]}...")
+
+        # Step 3: Poll for results
+        print("  3️⃣ Polling for results...")
+        poll_result = mcp_client.call_tool(
+            "poll_genie_response",
+            arguments={
+                "space_id": space_id,
+                "conversation_id": conversation_id,
+                "message_id": message_id,
+                "max_wait_seconds": 60,
+                "fetch_query_results": True
+            }
+        )
+
+        poll_content = _extract_text_from_result(poll_result)
+        poll_data = json.loads(poll_content)
+
+        status = poll_data.get("status", "UNKNOWN")
+        print(f"  ✅ Poll result: status={status}")
+
+        # Should have a status
+        assert "status" in poll_data, "Should have status"
+
+        # If completed, should have attachments
+        if status == "COMPLETED":
+            assert "attachments" in poll_data, "Completed response should have attachments"
+            print(f"  ✅ Got attachments: {list(poll_data.get('attachments', {}).keys())}")
+
+            # Check for query_result if available
+            if "query_result" in poll_data:
+                print(f"  ✅ Got query_result with {poll_data['query_result'].get('row_count', 0)} rows")
+
+        print("  ✅ Full flow completed successfully!")
+
+    except json.JSONDecodeError as e:
+        print(f"  ⚠️ JSON parse error: {e}")
+        pytest.skip("Could not parse JSON response")
+
+
+# ============================================================================
+# Test: Query Space Tool - Success Cases (Deprecated - for backward compatibility)
 # ============================================================================
 
 def test_query_space_simple_query(mcp_client):

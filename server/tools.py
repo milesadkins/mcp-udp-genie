@@ -519,6 +519,77 @@ def _extract_attachments(message_dict: dict) -> dict:
     return result
 
 
+def _fetch_query_result(
+    space_id: str,
+    conversation_id: str,
+    message_id: str,
+    attachment_id: str,
+    headers: dict
+) -> Optional[dict]:
+    """
+    Fetch query result data for a specific attachment.
+
+    Args:
+        space_id: The Genie space ID
+        conversation_id: The conversation ID
+        message_id: The message ID
+        attachment_id: The attachment ID to fetch results for
+        headers: Authentication headers
+
+    Returns:
+        dict: Query result data or None if fetch fails
+    """
+    try:
+        query_result_url = f"{WORKSPACE_URL}/api/2.0/genie/spaces/{space_id}/conversations/{conversation_id}/messages/{message_id}/attachments/{attachment_id}/query-result"
+
+        response_dict = _make_api_request(
+            "GET",
+            query_result_url,
+            headers
+        )
+
+        statement_response = response_dict.get("statement_response", {})
+        if not statement_response:
+            return None
+
+        status = statement_response.get("status", {}).get("state", "UNKNOWN")
+
+        if status == "SUCCEEDED":
+            manifest = statement_response.get("manifest", {})
+            result_data = statement_response.get("result", {})
+
+            result = {
+                "statement_id": statement_response.get("statement_id", ""),
+                "status": status,
+                "sql": "",  # Will be populated from attachment if available
+                "schema": {
+                    "columns": manifest.get("schema", {}).get("columns", [])
+                },
+                "data": result_data.get("data_array", []),
+                "row_count": manifest.get("total_row_count", 0),
+                "truncated": manifest.get("truncated", False)
+            }
+
+            # Add chunk info for large results
+            if manifest.get("total_chunk_count", 1) > 1:
+                result["chunk_info"] = {
+                    "total_chunks": manifest.get("total_chunk_count", 1),
+                    "current_chunk": result_data.get("chunk_index", 0),
+                    "row_offset": result_data.get("row_offset", 0)
+                }
+
+            return result
+        else:
+            return {
+                "statement_id": statement_response.get("statement_id", ""),
+                "status": status,
+                "error": f"Query execution status: {status}"
+            }
+
+    except Exception as e:
+        return None
+
+
 def load_tools(mcp_server):
     """
     Register all MCP tools with the server.
@@ -612,12 +683,17 @@ def load_tools(mcp_server):
 
     @mcp_server.tool
     def query_space_01f0d08866f11370b6735facce14e3ff(
-        query: str, 
+        query: str,
         conversation_id: Optional[str] = None
     ) -> dict:
         """
-        Submit a natural language query to the US Stocks Price & Volume genie space.
-        
+        [DEPRECATED] Submit a natural language query to the US Stocks Price & Volume genie space.
+
+        DEPRECATION NOTICE: This tool is deprecated. Use the generic tools instead:
+        1. list_genie_spaces() - to discover available spaces
+        2. query_genie(space_id, query) - to submit queries to any space
+        3. poll_genie_response(space_id, conversation_id, message_id) - to get results
+
         This tool submits a query to Databricks Genie and returns immediately with the
         conversation_id and message_id. Use poll_response_01f0d08866f11370b6735facce14e3ff
         to check the status and retrieve results.
@@ -729,14 +805,17 @@ def load_tools(mcp_server):
 
     @mcp_server.tool
     def poll_response_01f0d08866f11370b6735facce14e3ff(
-        conversation_id: str, 
+        conversation_id: str,
         message_id: str,
         max_wait_seconds: int = 60,
         fetch_query_results: bool = True
     ) -> dict:
         """
-        Poll for the response of a previously initiated message in the US Stocks Price & Volume genie space.
-        
+        [DEPRECATED] Poll for the response of a previously initiated message in the US Stocks Price & Volume genie space.
+
+        DEPRECATION NOTICE: This tool is deprecated. Use poll_genie_response() instead,
+        which works with any Genie space by accepting space_id as a parameter.
+
         Use this tool to retrieve results for a message that was started but not yet completed.
         The function will automatically poll until the message reaches a terminal state
         (COMPLETED, FAILED, CANCELLED) or until the timeout is reached.
@@ -1068,8 +1147,11 @@ def load_tools(mcp_server):
         attachment_id: str
     ) -> dict:
         """
-        Fetch the actual data results from a specific SQL query attachment.
-        
+        [DEPRECATED] Fetch the actual data results from a specific SQL query attachment.
+
+        DEPRECATION NOTICE: This tool is deprecated. The new poll_genie_response() tool
+        automatically fetches query results when fetch_query_results=True (default).
+
         Use this tool when you have a query attachment ID and want to retrieve
         the actual data rows returned by the SQL query. This is useful for:
         - Getting detailed data from a specific query
@@ -1277,3 +1359,432 @@ def load_tools(mcp_server):
                     "attachment_id": attachment_id
                 }
 
+    # =========================================================================
+    # DYNAMIC GENIE SPACE TOOLS (Generic - works with any Genie space)
+    # =========================================================================
+
+    @mcp_server.tool
+    def list_genie_spaces() -> dict:
+        """
+        List all available Genie spaces.
+
+        Call this FIRST to discover which Genie space is appropriate for the user's
+        question. Returns space IDs, names, and descriptions to help select the
+        right space for querying.
+
+        Use this tool when:
+        - You need to find available data sources
+        - The user asks about data without specifying a space
+        - You want to discover what Genie spaces exist
+
+        Returns:
+            dict: A dictionary containing:
+                - spaces (list): List of available Genie spaces, each with:
+                    - space_id (str): The unique space identifier
+                    - title (str): Human-readable space name
+                    - description (str): Description of the space's data
+                - count (int): Number of spaces found
+                - error (str): Error message if something went wrong
+
+        Example response:
+            {
+                "spaces": [
+                    {
+                        "space_id": "01f0d08866f11370b6735facce14e3ff",
+                        "title": "US Stocks Price & Volume",
+                        "description": "Historical US stock price and volume data"
+                    }
+                ],
+                "count": 1
+            }
+
+        Next steps:
+            Use query_genie with the space_id to submit natural language queries.
+        """
+        try:
+            w = _get_workspace_client()
+
+            # Use REST API to list spaces
+            list_spaces_url = f"{WORKSPACE_URL}/api/2.0/genie/spaces"
+
+            response_dict = _make_api_request(
+                "GET",
+                list_spaces_url,
+                w.config.authenticate()
+            )
+
+            # Extract spaces from response
+            spaces_list = response_dict.get("spaces", [])
+
+            spaces = []
+            for space in spaces_list:
+                # Space ID can be in 'id' or 'space_id' depending on API version
+                space_id = space.get("id") or space.get("space_id") or ""
+                spaces.append({
+                    "space_id": space_id,
+                    "title": space.get("title", ""),
+                    "description": space.get("description", "")
+                })
+
+            return {
+                "spaces": spaces,
+                "count": len(spaces)
+            }
+
+        except Exception as e:
+            error_str = str(e)
+
+            if "PERMISSION_DENIED" in error_str:
+                return {
+                    "error": "PERMISSION_DENIED",
+                    "message": "Insufficient permissions to list Genie spaces",
+                    "spaces": [],
+                    "count": 0
+                }
+            elif "UNAUTHENTICATED" in error_str:
+                return {
+                    "error": "UNAUTHENTICATED",
+                    "message": "Authentication failed. Please check credentials.",
+                    "spaces": [],
+                    "count": 0
+                }
+            else:
+                return {
+                    "error": "LIST_SPACES_FAILED",
+                    "message": f"Failed to list Genie spaces: {error_str}",
+                    "spaces": [],
+                    "count": 0
+                }
+
+    @mcp_server.tool
+    def query_genie(
+        space_id: str,
+        query: str,
+        conversation_id: Optional[str] = None
+    ) -> dict:
+        """
+        Submit a natural language query to a Genie space.
+
+        PREREQUISITE: Call list_genie_spaces first to find the appropriate space_id.
+
+        This tool submits a query to Databricks Genie and returns immediately with
+        conversation_id and message_id. Use poll_genie_response to retrieve results.
+
+        Args:
+            space_id (str): The Genie space ID (from list_genie_spaces)
+            query (str): Natural language question about the data
+            conversation_id (Optional[str]): Continue an existing conversation.
+                                            If None, starts a new conversation.
+
+        Returns:
+            dict: A dictionary containing:
+                - conversation_id (str): For follow-up queries and polling
+                - message_id (str): For polling the response
+                - status (str): Initial message status (usually SUBMITTED)
+                - space_id (str): The space being queried
+                - error (str): Error message if something went wrong
+
+        Example response:
+            {
+                "conversation_id": "01f0e34ce9641238a5018229451c2ff2",
+                "message_id": "01f0e34ce97a157983ba500ee38047ea",
+                "status": "SUBMITTED",
+                "space_id": "01f0d08866f11370b6735facce14e3ff"
+            }
+
+        Next steps:
+            Use poll_genie_response with the returned conversation_id and message_id
+            to retrieve the results.
+
+        Note:
+            - Query length is limited to 10,000 characters
+            - Conversation state is maintained for follow-up questions
+            - Message processing happens asynchronously
+        """
+        # Validate inputs
+        if not space_id or not space_id.strip():
+            return {
+                "error": "INVALID_INPUT",
+                "message": "space_id is required"
+            }
+
+        if not query or not query.strip():
+            return {
+                "error": "INVALID_INPUT",
+                "message": "query is required"
+            }
+
+        if len(query.strip()) > 10000:
+            return {
+                "error": "INVALID_INPUT",
+                "message": "Query exceeds maximum length of 10,000 characters"
+            }
+
+        # Validate conversation_id format if provided
+        if conversation_id:
+            if not isinstance(conversation_id, str) or len(conversation_id) < 10:
+                return {
+                    "error": "INVALID_INPUT",
+                    "message": "Invalid conversation_id format. Must be a valid UUID string."
+                }
+
+        try:
+            w = _get_workspace_client()
+
+            # Prepare request payload
+            json_payload = {"content": query.strip()}
+            if conversation_id:
+                json_payload["conversation_id"] = conversation_id
+
+            # Start conversation / send message
+            start_conversation_url = f"{WORKSPACE_URL}/api/2.0/genie/spaces/{space_id}/start-conversation"
+            response_dict = _make_api_request(
+                "POST",
+                start_conversation_url,
+                w.config.authenticate(),
+                json_payload
+            )
+
+            # Extract response data
+            message = response_dict.get("message", {})
+            conv_id = message.get("conversation_id", "")
+            msg_id = response_dict.get("message_id", "")
+            status = message.get("status", "UNKNOWN")
+
+            if not conv_id or not msg_id:
+                return {
+                    "error": "INVALID_RESPONSE",
+                    "message": "Failed to extract conversation_id or message_id from response",
+                    "space_id": space_id
+                }
+
+            return {
+                "conversation_id": conv_id,
+                "message_id": msg_id,
+                "status": status,
+                "space_id": space_id
+            }
+
+        except Exception as e:
+            error_str = str(e)
+
+            if "RESOURCE_NOT_FOUND" in error_str:
+                return {
+                    "error": "SPACE_NOT_FOUND",
+                    "message": f"Genie space '{space_id}' not found. Use list_genie_spaces to find valid space IDs.",
+                    "space_id": space_id
+                }
+            elif "PERMISSION_DENIED" in error_str:
+                return {
+                    "error": "PERMISSION_DENIED",
+                    "message": f"Insufficient permissions to query space '{space_id}'",
+                    "space_id": space_id
+                }
+            else:
+                return {
+                    "error": "QUERY_FAILED",
+                    "message": str(e),
+                    "space_id": space_id,
+                    "conversation_id": conversation_id
+                }
+
+    @mcp_server.tool
+    def poll_genie_response(
+        space_id: str,
+        conversation_id: str,
+        message_id: str,
+        max_wait_seconds: int = 60,
+        fetch_query_results: bool = True
+    ) -> dict:
+        """
+        Poll for Genie query completion and retrieve results.
+
+        Call this after query_genie to wait for and retrieve results.
+
+        Args:
+            space_id (str): The Genie space ID (must match the query_genie call)
+            conversation_id (str): From query_genie response
+            message_id (str): From query_genie response
+            max_wait_seconds (int): Maximum time to wait (1-300, default 60)
+            fetch_query_results (bool): Whether to fetch full query results (default True)
+
+        Returns:
+            dict: A comprehensive dictionary containing:
+                - status (str): Final message status (COMPLETED, FAILED, TIMEOUT, etc.)
+                - space_id (str): The Genie space ID
+                - conversation_id (str): The conversation ID
+                - message_id (str): The message ID
+                - attachments (dict): Structured attachments containing:
+                    - text_responses: Natural language responses
+                    - queries: SQL queries with metadata
+                    - suggested_questions: Follow-up suggestions
+                - query_result (dict): Actual data from SQL query (if fetch_query_results=True)
+                    - sql: The generated SQL query
+                    - schema: Column definitions
+                    - data: Array of data rows
+                    - row_count: Total rows returned
+                - poll_attempts (int): Number of polling attempts made
+                - error (str): Error message if something went wrong
+
+        Example response:
+            {
+                "status": "COMPLETED",
+                "space_id": "01f0d08866f11370b6735facce14e3ff",
+                "conversation_id": "01f0e34ce9641238a5018229451c2ff2",
+                "message_id": "01f0e34ce97a157983ba500ee38047ea",
+                "attachments": {
+                    "text_responses": [],
+                    "queries": [{
+                        "sql": "SELECT Ticker, SUM(Volume)...",
+                        "description": "Find highest volume stock",
+                        "row_count": 1
+                    }],
+                    "suggested_questions": ["Show me the top 5..."]
+                },
+                "query_result": {
+                    "sql": "SELECT Ticker, SUM(Volume)...",
+                    "schema": {"columns": [...]},
+                    "data": [["NVDA", "51746176100"]],
+                    "row_count": 1
+                },
+                "poll_attempts": 5
+            }
+        """
+        # Validate inputs
+        if not space_id or not space_id.strip():
+            return {
+                "error": "INVALID_INPUT",
+                "message": "space_id is required"
+            }
+
+        if not conversation_id or not message_id:
+            return {
+                "error": "INVALID_INPUT",
+                "message": "conversation_id and message_id are required"
+            }
+
+        if not isinstance(conversation_id, str) or len(conversation_id) < 10:
+            return {
+                "error": "INVALID_INPUT",
+                "message": "Invalid conversation_id format"
+            }
+
+        if not isinstance(message_id, str) or len(message_id) < 10:
+            return {
+                "error": "INVALID_INPUT",
+                "message": "Invalid message_id format"
+            }
+
+        # Clamp max_wait_seconds to valid range
+        max_wait_seconds = max(1, min(300, max_wait_seconds))
+        max_attempts = max(1, max_wait_seconds // POLL_INTERVAL_SECONDS)
+
+        try:
+            w = _get_workspace_client()
+            headers = w.config.authenticate()
+
+            # Poll for message completion
+            current_status = "SUBMITTED"
+            message_dict = {}
+            attempts = 0
+
+            get_message_url = f"{WORKSPACE_URL}/api/2.0/genie/spaces/{space_id}/conversations/{conversation_id}/messages/{message_id}"
+
+            while attempts < max_attempts:
+                attempts += 1
+
+                message_dict = _make_api_request(
+                    "GET",
+                    get_message_url,
+                    headers
+                )
+
+                current_status = message_dict.get("status", "UNKNOWN")
+
+                if current_status in TERMINAL_MESSAGE_STATES:
+                    break
+
+                if attempts < max_attempts:
+                    time.sleep(POLL_INTERVAL_SECONDS)
+
+            # Build base result
+            result = {
+                "status": current_status,
+                "space_id": space_id,
+                "conversation_id": conversation_id,
+                "message_id": message_id,
+                "poll_attempts": attempts
+            }
+
+            # Handle terminal error states
+            if current_status == "FAILED":
+                error_details = []
+                for attachment in message_dict.get("attachments", []):
+                    if "error" in attachment:
+                        error_details.append(attachment["error"])
+
+                result["error"] = "MESSAGE_FAILED"
+                result["message"] = "The Genie message failed to process"
+                if error_details:
+                    result["error_details"] = error_details
+                return result
+
+            if current_status == "CANCELLED":
+                result["error"] = "MESSAGE_CANCELLED"
+                result["message"] = "The Genie message was cancelled"
+                return result
+
+            if current_status == "ERROR":
+                result["error"] = "MESSAGE_ERROR"
+                result["message"] = "An error occurred during message processing"
+                return result
+
+            # Check for timeout
+            if current_status not in TERMINAL_MESSAGE_STATES:
+                result["error"] = "TIMEOUT"
+                result["message"] = f"Message did not complete within {max_wait_seconds} seconds. Current status: {current_status}"
+                return result
+
+            # Extract attachments from completed message
+            result["attachments"] = _extract_attachments(message_dict)
+
+            # Fetch query results if requested and available
+            if fetch_query_results and result["attachments"]["queries"]:
+                for query_info in result["attachments"]["queries"]:
+                    attachment_id = query_info.get("attachment_id", "")
+                    if not attachment_id:
+                        continue
+
+                    query_result = _fetch_query_result(
+                        space_id, conversation_id, message_id,
+                        attachment_id, headers
+                    )
+
+                    if query_result:
+                        # Add the SQL from the attachment
+                        query_result["sql"] = query_info.get("sql", "")
+                        query_result["description"] = query_info.get("description", "")
+                        result["query_result"] = query_result
+                        break  # Only fetch first query result
+
+            return result
+
+        except Exception as e:
+            error_str = str(e)
+
+            if "RESOURCE_NOT_FOUND" in error_str:
+                return {
+                    "error": "RESOURCE_NOT_FOUND",
+                    "message": "Conversation or message not found. Verify the IDs are correct.",
+                    "space_id": space_id,
+                    "conversation_id": conversation_id,
+                    "message_id": message_id
+                }
+            else:
+                return {
+                    "error": "POLL_FAILED",
+                    "message": str(e),
+                    "space_id": space_id,
+                    "conversation_id": conversation_id,
+                    "message_id": message_id
+                }
