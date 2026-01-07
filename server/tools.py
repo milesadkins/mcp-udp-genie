@@ -1112,3 +1112,193 @@ def load_tools(mcp_server):
                     "conversation_id": conversation_id,
                     "message_id": message_id
                 }
+
+    @mcp_server.tool
+    def create_sql_alert(
+        alert_name: str,
+        sql_query: str,
+        warehouse_id: str,
+        column_name: str,
+        operator: str,
+        threshold_value: float,
+        description: Optional[str] = None
+    ) -> dict:
+        """
+        Create a Databricks SQL alert from a SQL query.
+
+        Use this tool after poll_genie_response to set up automated monitoring
+        on query results. The alert will trigger when the specified column
+        meets the threshold condition.
+
+        Use this tool when:
+        - User wants to monitor query results automatically
+        - User asks to "alert me when..." or "notify me if..."
+        - User wants to set up automated monitoring on Genie insights
+
+        Args:
+            alert_name: Human-readable name (use snake_case, e.g., "high_revenue_orders")
+            sql_query: SQL query to monitor (from poll_genie_response.query_result.sql)
+            warehouse_id: SQL warehouse ID to execute the query
+            column_name: Column in query result to monitor
+            operator: Comparison operator - one of:
+                - GREATER_THAN: Trigger when value > threshold
+                - GREATER_THAN_OR_EQUAL: Trigger when value >= threshold
+                - LESS_THAN: Trigger when value < threshold
+                - LESS_THAN_OR_EQUAL: Trigger when value <= threshold
+                - EQUAL: Trigger when value == threshold
+                - NOT_EQUAL: Trigger when value != threshold
+                - IS_NULL: Trigger when value is NULL
+            threshold_value: Numeric threshold for triggering
+            description: Optional description of alert purpose
+
+        Returns:
+            dict: Contains alert_id, alert_name, query_id, alert_url on success
+                  or error, message on failure
+
+        Example response:
+            {
+                "success": True,
+                "alert_id": "abc-123",
+                "alert_name": "high_revenue_orders",
+                "query_id": "query-456",
+                "alert_url": "https://workspace.cloud.databricks.com/sql/alerts/abc-123",
+                "message": "Alert created successfully"
+            }
+
+        Next steps:
+            View and manage the alert in Databricks SQL UI using the alert_url.
+            Configure notification recipients in the UI if needed.
+        """
+        from databricks.sdk.service import sql as sql_service
+
+        # Operator mapping
+        operator_map = {
+            "GREATER_THAN": sql_service.AlertOperator.GREATER_THAN,
+            "GREATER_THAN_OR_EQUAL": sql_service.AlertOperator.GREATER_THAN_OR_EQUAL,
+            "LESS_THAN": sql_service.AlertOperator.LESS_THAN,
+            "LESS_THAN_OR_EQUAL": sql_service.AlertOperator.LESS_THAN_OR_EQUAL,
+            "EQUAL": sql_service.AlertOperator.EQUAL,
+            "NOT_EQUAL": sql_service.AlertOperator.NOT_EQUAL,
+            "IS_NULL": sql_service.AlertOperator.IS_NULL,
+        }
+
+        # Input validation
+        if not alert_name or not alert_name.strip():
+            return {
+                "error": "INVALID_INPUT",
+                "message": "alert_name is required"
+            }
+
+        if not sql_query or not sql_query.strip():
+            return {
+                "error": "INVALID_INPUT",
+                "message": "sql_query is required"
+            }
+
+        if not warehouse_id or not warehouse_id.strip():
+            return {
+                "error": "INVALID_INPUT",
+                "message": "warehouse_id is required"
+            }
+
+        if not column_name or not column_name.strip():
+            return {
+                "error": "INVALID_INPUT",
+                "message": "column_name is required"
+            }
+
+        operator_upper = operator.upper().strip()
+        if operator_upper not in operator_map:
+            return {
+                "error": "INVALID_OPERATOR",
+                "message": f"operator must be one of: {', '.join(operator_map.keys())}",
+                "provided": operator
+            }
+
+        # Validate SQL is SELECT statement (basic check)
+        sql_upper = sql_query.strip().upper()
+        if not sql_upper.startswith("SELECT"):
+            return {
+                "error": "INVALID_INPUT",
+                "message": "sql_query must be a SELECT statement"
+            }
+
+        query = None
+        try:
+            w = _get_workspace_client()
+
+            # Step 1: Create the saved query
+            query_name = f"alert_query_{alert_name.strip()}_{int(time.time())}"
+            query = w.queries.create(
+                query=sql_service.CreateQueryRequestQuery(
+                    display_name=query_name,
+                    warehouse_id=warehouse_id.strip(),
+                    description=description or f"Query for alert: {alert_name}",
+                    query_text=sql_query.strip(),
+                )
+            )
+
+            # Step 2: Create the alert
+            alert = w.alerts.create(
+                alert=sql_service.CreateAlertRequestAlert(
+                    display_name=alert_name.strip(),
+                    query_id=query.id,
+                    condition=sql_service.AlertCondition(
+                        operand=sql_service.AlertConditionOperand(
+                            column=sql_service.AlertOperandColumn(name=column_name.strip())
+                        ),
+                        op=operator_map[operator_upper],
+                        threshold=sql_service.AlertConditionThreshold(
+                            value=sql_service.AlertOperandValue(double_value=float(threshold_value))
+                        ),
+                        empty_result_state=sql_service.AlertState.OK,
+                    ),
+                    notify_on_ok=False,
+                ),
+                auto_resolve_display_name=True
+            )
+
+            return {
+                "success": True,
+                "alert_id": alert.id,
+                "alert_name": alert.display_name,
+                "query_id": query.id,
+                "query_name": query_name,
+                "alert_url": f"{WORKSPACE_URL}/sql/alerts/{alert.id}",
+                "message": f"Alert '{alert_name}' created successfully"
+            }
+
+        except Exception as e:
+            error_str = str(e)
+
+            # Rollback: delete saved query if it was created
+            if query is not None:
+                try:
+                    w.queries.delete(id=query.id)
+                except Exception:
+                    pass  # Best effort cleanup
+
+            if "RESOURCE_NOT_FOUND" in error_str or "warehouse" in error_str.lower():
+                return {
+                    "error": "WAREHOUSE_NOT_FOUND",
+                    "message": f"Warehouse '{warehouse_id}' not found or not accessible",
+                    "warehouse_id": warehouse_id
+                }
+            elif "PERMISSION_DENIED" in error_str:
+                return {
+                    "error": "PERMISSION_DENIED",
+                    "message": "Insufficient permissions to create alerts",
+                    "details": error_str
+                }
+            elif "column" in error_str.lower():
+                return {
+                    "error": "COLUMN_NOT_FOUND",
+                    "message": f"Column '{column_name}' not found in query result",
+                    "column_name": column_name
+                }
+            else:
+                return {
+                    "error": "ALERT_CREATION_FAILED",
+                    "message": str(e),
+                    "alert_name": alert_name
+                }

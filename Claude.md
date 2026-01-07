@@ -56,6 +56,8 @@ app.yaml            # Databricks Apps deployment config
     - `list_genie_spaces`: List all available Genie spaces with IDs and metadata
     - `query_genie(space_id, query, conversation_id?)`: Submit NL query to any Genie space
     - `poll_genie_response(space_id, conversation_id, message_id)`: Poll for results
+  - **SQL Alert Tools:**
+    - `create_sql_alert(alert_name, sql_query, warehouse_id, column_name, operator, threshold_value)`: Create a SQL alert from Genie query results
 
 ### `server/utils.py`
 - `get_workspace_client()`: Returns WorkspaceClient with app service principal auth (when deployed) or developer auth (local)
@@ -260,6 +262,30 @@ result = poll_genie_response(
 )
 # Returns: {"status": "COMPLETED", "query_result": {"sql": "...", "data": [...], "row_count": 5}}
 ```
+
+### Step 4: Create an Alert (Optional)
+
+After getting query results, create a SQL alert to monitor the data automatically:
+
+```python
+# Create an alert based on the Genie query
+result = create_sql_alert(
+    alert_name="high_volume_stocks",
+    sql_query=poll_result["query_result"]["sql"],  # SQL from Step 3
+    warehouse_id="abc123def456",
+    column_name="volume",
+    operator="GREATER_THAN",
+    threshold_value=1000000,
+    description="Alert when stock volume exceeds 1M"
+)
+# Returns: {"success": True, "alert_id": "...", "alert_url": "..."}
+```
+
+**Supported operators:**
+- `GREATER_THAN`, `GREATER_THAN_OR_EQUAL`
+- `LESS_THAN`, `LESS_THAN_OR_EQUAL`
+- `EQUAL`, `NOT_EQUAL`
+- `IS_NULL`
 
 ### Continuing Conversations
 
